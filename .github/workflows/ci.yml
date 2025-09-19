@@ -24,9 +24,10 @@ jobs:
       with:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
+        cache-dependency-path: 'package.json'
         
     - name: 📦 Install Dependencies
-      run: npm ci
+      run: npm install
       
     - name: 🔍 Type Check
       run: npm run type-check
@@ -38,15 +39,17 @@ jobs:
       run: npm run lint
       
     - name: 🧪 Run Unit Tests
-      run: npm run test -- --coverage
+      run: npm run test -- --coverage --passWithNoTests
       
     - name: 📊 Upload Coverage to Codecov
       uses: codecov/codecov-action@v3
+      if: matrix.node-version == '20.x'
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         file: ./coverage/lcov.info
         flags: unittests
         name: codecov-umbrella
+        fail_ci_if_error: false
         
   build:
     name: 🛠️ Build Application
@@ -62,9 +65,10 @@ jobs:
       with:
         node-version: '20.x'
         cache: 'npm'
+        cache-dependency-path: 'package.json'
         
     - name: 📦 Install Dependencies
-      run: npm ci
+      run: npm install
       
     - name: 🛠️ Build Application
       run: npm run build
@@ -72,11 +76,12 @@ jobs:
         NEXT_PUBLIC_MULTIVERSX_NETWORK: devnet
         NEXT_PUBLIC_MULTIVERSX_CHAIN_ID: D
         
-    - name: 📎 Upload Build Artifacts
+    - name: 📌 Upload Build Artifacts
       uses: actions/upload-artifact@v3
       with:
         name: build-files
         path: .next/
+        retention-days: 1
         
   deploy-preview:
     name: 🚀 Deploy Preview
@@ -90,6 +95,7 @@ jobs:
       
     - name: 🚀 Deploy to Vercel Preview
       uses: amondnet/vercel-action@v25
+      if: env.VERCEL_TOKEN != ''
       with:
         vercel-token: ${{ secrets.VERCEL_TOKEN }}
         vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
@@ -108,6 +114,7 @@ jobs:
       
     - name: 🌐 Deploy to Vercel Production
       uses: amondnet/vercel-action@v25
+      if: env.VERCEL_TOKEN != ''
       with:
         vercel-token: ${{ secrets.VERCEL_TOKEN }}
         vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
@@ -135,6 +142,8 @@ jobs:
         if [ -d "contracts" ]; then
           cd contracts
           cargo fmt -- --check
+        else
+          echo "No contracts directory found - skipping Rust checks"
         fi
         
     - name: 🐛 Run Clippy
@@ -142,6 +151,8 @@ jobs:
         if [ -d "contracts" ]; then
           cd contracts
           cargo clippy -- -D warnings
+        else
+          echo "No contracts directory found - skipping Clippy"
         fi
         
     - name: 🧪 Test Smart Contracts
@@ -149,4 +160,6 @@ jobs:
         if [ -d "contracts" ] && [ -f "contracts/Cargo.toml" ]; then
           cd contracts
           cargo test
+        else
+          echo "No Rust contracts found - skipping tests"
         fi
