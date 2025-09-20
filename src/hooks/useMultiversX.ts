@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Address, Account, TokenTransfer, Transaction } from '@multiversx/sdk-core';
 import { ApiNetworkProvider } from '@multiversx/sdk-network-providers';
 import { IWalletProvider } from '@/lib/multiversx/providers';
-import { TransactionManager, ITransactionOnNetwork } from '@/lib/multiversx/transactions';
+import { TransactionManager } from '@/lib/multiversx/transactions';
 
 export interface MultiversXConfig {
   networkUrl: string;
@@ -195,7 +195,7 @@ export function useMultiversX(config: MultiversXConfig) {
     }
   }, [networkProvider, walletState.address]);
 
-  const waitForTransaction = useCallback(async (txHash: string): Promise<ITransactionOnNetwork | null> => {
+  const waitForTransaction = useCallback(async (txHash: string) => {
     if (!transactionManager) {
       return null;
     }

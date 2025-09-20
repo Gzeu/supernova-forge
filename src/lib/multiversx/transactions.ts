@@ -8,8 +8,9 @@ import {
   TokenTransfer,
   TransactionWatcher,
   SmartContract,
-  ApiNetworkProvider,
+  ITransactionOnNetwork,
 } from '@multiversx/sdk-core';
+import { ApiNetworkProvider } from '@multiversx/sdk-network-providers';
 import { UserSigner } from '@multiversx/sdk-wallet';
 
 // Define types that might be missing
@@ -30,36 +31,13 @@ export interface IChainID {
   valueOf(): string;
 }
 
-export interface ITransactionOnNetwork {
-  hash: string;
-  status: string;
-  sender: string;
-  receiver: string;
-  value: string;
-  gasLimit: number;
-  gasPrice: number;
-  gasUsed: number;
-  nonce: number;
-  round: number;
-  blockNonce: number;
-  blockHash: string;
-  timestamp: number;
-  smartContractResults?: any[];
-  logs?: any[];
-  receipt?: any;
-  isCompleted: boolean;
-  isSuccessful: boolean;
-  isFailed: boolean;
-  isPending: boolean;
-}
-
 export class TransactionManager {
   private networkProvider: ApiNetworkProvider;
   private watcher: TransactionWatcher;
 
   constructor(networkProvider: ApiNetworkProvider) {
     this.networkProvider = networkProvider;
-    this.watcher = new TransactionWatcher(networkProvider);
+    this.watcher = new TransactionWatcher(networkProvider as any);
   }
 
   async createTransaction(
@@ -87,7 +65,8 @@ export class TransactionManager {
   }
 
   async sendTransaction(transaction: Transaction, signer: UserSigner): Promise<string> {
-    await signer.sign(transaction);
+    const serialized = transaction.serializeForSigning();
+    await signer.sign(serialized);
     return await this.networkProvider.sendTransaction(transaction);
   }
 
@@ -96,28 +75,7 @@ export class TransactionManager {
       getHash: () => ({ hex: () => txHash })
     } as any);
 
-    return {
-      hash: txHash,
-      status: transactionOnNetwork.status.toString(),
-      sender: transactionOnNetwork.sender.toString(),
-      receiver: transactionOnNetwork.receiver.toString(),
-      value: transactionOnNetwork.value.toString(),
-      gasLimit: transactionOnNetwork.gasLimit.valueOf(),
-      gasPrice: transactionOnNetwork.gasPrice.valueOf(),
-      gasUsed: transactionOnNetwork.gasUsed?.valueOf() || 0,
-      nonce: transactionOnNetwork.nonce.valueOf(),
-      round: transactionOnNetwork.round || 0,
-      blockNonce: transactionOnNetwork.blockNonce?.valueOf() || 0,
-      blockHash: transactionOnNetwork.blockHash || '',
-      timestamp: transactionOnNetwork.timestamp?.valueOf() || 0,
-      smartContractResults: transactionOnNetwork.contractResults?.getImmediate() || [],
-      logs: transactionOnNetwork.logs?.events || [],
-      receipt: transactionOnNetwork.receipt,
-      isCompleted: transactionOnNetwork.status.isExecuted(),
-      isSuccessful: transactionOnNetwork.status.isSuccessful(),
-      isFailed: transactionOnNetwork.status.isFailed(),
-      isPending: !transactionOnNetwork.status.isExecuted(),
-    };
+    return transactionOnNetwork;
   }
 
   async getTransactionStatus(txHash: string): Promise<{

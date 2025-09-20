@@ -13,16 +13,15 @@ export {
   HWProvider,
 };
 
-// Create provider instances
-export const createApiNetworkProvider = (url: string) => {
-  return new ApiNetworkProvider(url);
-};
+// Wallet provider types
+export enum WalletProvider {
+  EXTENSION = 'extension',
+  WEB_WALLET = 'web-wallet',
+  WALLET_CONNECT = 'wallet-connect',
+  LEDGER = 'ledger',
+}
 
-export const createWalletProvider = (walletUrl: string) => {
-  return new WalletProvider(walletUrl);
-};
-
-// Types for providers
+// Interface for wallet providers
 export interface IWalletProvider {
   init(): Promise<boolean>;
   login(): Promise<string>;
@@ -33,6 +32,96 @@ export interface IWalletProvider {
   signTransactions(transactions: any[]): Promise<any[]>;
   signMessage(message: any): Promise<string>;
 }
+
+// Wallet Provider Factory
+export class WalletProviderFactory {
+  static getSupportedProviders(): WalletProvider[] {
+    return [
+      WalletProvider.EXTENSION,
+      WalletProvider.WEB_WALLET,
+      WalletProvider.WALLET_CONNECT,
+      WalletProvider.LEDGER,
+    ];
+  }
+
+  static async isProviderAvailable(provider: WalletProvider): Promise<boolean> {
+    switch (provider) {
+      case WalletProvider.EXTENSION:
+        return typeof window !== 'undefined' && 'elrondWallet' in window;
+      case WalletProvider.WEB_WALLET:
+        return true; // Always available
+      case WalletProvider.WALLET_CONNECT:
+        return true; // Always available
+      case WalletProvider.LEDGER:
+        return typeof navigator !== 'undefined' && 'usb' in navigator;
+      default:
+        return false;
+    }
+  }
+
+  static createProvider(provider: WalletProvider): IWalletProvider {
+    switch (provider) {
+      case WalletProvider.EXTENSION:
+        return new MockExtensionProvider();
+      case WalletProvider.WEB_WALLET:
+        return new MockWebWalletProvider();
+      case WalletProvider.WALLET_CONNECT:
+        return new MockWalletConnectProvider();
+      case WalletProvider.LEDGER:
+        return new MockLedgerProvider();
+      default:
+        throw new Error(`Unsupported provider: ${provider}`);
+    }
+  }
+}
+
+// Mock providers for development
+class MockExtensionProvider implements IWalletProvider {
+  private initialized = false;
+  private connected = false;
+  private address = '';
+
+  async init(): Promise<boolean> {
+    this.initialized = true;
+    return true;
+  }
+
+  async login(): Promise<string> {
+    this.connected = true;
+    this.address = 'erd1mock' + Math.random().toString(36).substring(2, 15);
+    return this.address;
+  }
+
+  async logout(): Promise<boolean> {
+    this.connected = false;
+    this.address = '';
+    return true;
+  }
+
+  getAddress(): string {
+    return this.address;
+  }
+
+  isInitialized(): boolean {
+    return this.initialized;
+  }
+
+  isConnected(): boolean {
+    return this.connected;
+  }
+
+  async signTransactions(transactions: any[]): Promise<any[]> {
+    return transactions; // Mock signing
+  }
+
+  async signMessage(message: any): Promise<string> {
+    return 'mock_signature_' + Math.random().toString(36);
+  }
+}
+
+class MockWebWalletProvider extends MockExtensionProvider {}
+class MockWalletConnectProvider extends MockExtensionProvider {}
+class MockLedgerProvider extends MockExtensionProvider {}
 
 // Default provider configuration
 export const PROVIDER_CONFIG = {
