@@ -2,236 +2,199 @@ import {
   Transaction,
   TransactionPayload,
   Address,
-  Balance,
-  GasLimit,
-  GasPrice,
-  TransactionVersion,
-  ChainID,
+  Account,
+  NetworkConfig,
+  GasEstimator,
+  TokenTransfer,
+  TransactionWatcher,
+  SmartContract,
+  ApiNetworkProvider,
 } from '@multiversx/sdk-core';
-import { ApiNetworkProvider } from '@multiversx/sdk-network-providers';
-import {
-  networkConfig,
-  SUPERNOVA_TX_VERSION,
-  GAS_CONFIG,
-  TX_STATUS,
-  TransactionStatus,
-} from './config';
-import { IWalletProvider } from './providers';
+import { UserSigner } from '@multiversx/sdk-wallet';
 
-// Transaction Builder with Supernova Updates
-export class SupernovaTransactionBuilder {
-  private provider: ApiNetworkProvider;
+// Define types that might be missing
+export interface IBalance {
+  toString(): string;
+  toCurrencyString(): string;
+}
 
-  constructor() {
-    this.provider = new ApiNetworkProvider(networkConfig.apiUrl);
+export interface IGasLimit {
+  valueOf(): number;
+}
+
+export interface IGasPrice {
+  valueOf(): number;
+}
+
+export interface IChainID {
+  valueOf(): string;
+}
+
+export interface ITransactionOnNetwork {
+  hash: string;
+  status: string;
+  sender: string;
+  receiver: string;
+  value: string;
+  gasLimit: number;
+  gasPrice: number;
+  gasUsed: number;
+  nonce: number;
+  round: number;
+  blockNonce: number;
+  blockHash: string;
+  timestamp: number;
+  smartContractResults?: any[];
+  logs?: any[];
+  receipt?: any;
+  isCompleted: boolean;
+  isSuccessful: boolean;
+  isFailed: boolean;
+  isPending: boolean;
+}
+
+export class TransactionManager {
+  private networkProvider: ApiNetworkProvider;
+  private watcher: TransactionWatcher;
+
+  constructor(networkProvider: ApiNetworkProvider) {
+    this.networkProvider = networkProvider;
+    this.watcher = new TransactionWatcher(networkProvider);
   }
 
-  // Create basic transaction
-  async createTransaction({
-    sender,
-    receiver,
-    value = '0',
-    data = '',
-    gasLimit,
-    gasPrice = GAS_CONFIG.gasPrice,
-  }: {
-    sender: string;
-    receiver: string;
-    value?: string;
-    data?: string;
-    gasLimit?: number;
-    gasPrice?: number;
-  }): Promise<Transaction> {
-    const senderAddress = new Address(sender);
-    const account = await this.provider.getAccount(senderAddress);
-
-    // Calculate gas limit if not provided
-    const calculatedGasLimit = gasLimit || this.calculateGasLimit(data, value);
+  async createTransaction(
+    sender: Address,
+    receiver: Address,
+    value: TokenTransfer,
+    gasLimit: number,
+    data?: TransactionPayload
+  ): Promise<Transaction> {
+    const networkConfig = await this.networkProvider.getNetworkConfig();
+    const account = await this.networkProvider.getAccount(sender);
 
     const transaction = new Transaction({
-      sender: senderAddress,
-      receiver: new Address(receiver),
-      value: Balance.egld(value),
-      data: new TransactionPayload(data),
-      gasLimit: new GasLimit(calculatedGasLimit),
-      gasPrice: new GasPrice(gasPrice),
-      chainID: new ChainID(networkConfig.chainId),
-      version: new TransactionVersion(SUPERNOVA_TX_VERSION),
+      sender,
+      receiver,
+      value,
+      gasLimit,
+      data,
+      chainID: networkConfig.ChainID,
+      gasPrice: networkConfig.MinGasPrice,
       nonce: account.nonce,
     });
 
     return transaction;
   }
 
-  // Create smart contract call transaction
-  async createSmartContractCall({
-    sender,
-    contractAddress,
-    functionName,
-    args = [],
-    value = '0',
-    gasLimit = GAS_CONFIG.gasLimit.scCall,
-  }: {
-    sender: string;
-    contractAddress: string;
-    functionName: string;
-    args?: any[];
-    value?: string;
-    gasLimit?: number;
-  }): Promise<Transaction> {
-    // Encode function call data
-    const data = this.encodeFunctionCall(functionName, args);
-
-    return this.createTransaction({
-      sender,
-      receiver: contractAddress,
-      value,
-      data,
-      gasLimit,
-    });
+  async sendTransaction(transaction: Transaction, signer: UserSigner): Promise<string> {
+    await signer.sign(transaction);
+    return await this.networkProvider.sendTransaction(transaction);
   }
 
-  // Create smart contract deploy transaction
-  async createSmartContractDeploy({
-    sender,
-    code,
-    args = [],
-    value = '0',
-    gasLimit = GAS_CONFIG.gasLimit.scDeploy,
-  }: {
-    sender: string;
-    code: string;
-    args?: any[];
-    value?: string;
-    gasLimit?: number;
-  }): Promise<Transaction> {
-    // Encode deployment data
-    const data = this.encodeDeployData(code, args);
+  async waitForTransaction(txHash: string): Promise<ITransactionOnNetwork> {
+    const transactionOnNetwork = await this.watcher.awaitCompleted({
+      getHash: () => ({ hex: () => txHash })
+    } as any);
 
-    return this.createTransaction({
-      sender,
-      receiver: Address.Zero().bech32(),
-      value,
-      data,
-      gasLimit,
-    });
+    return {
+      hash: txHash,
+      status: transactionOnNetwork.status.toString(),
+      sender: transactionOnNetwork.sender.toString(),
+      receiver: transactionOnNetwork.receiver.toString(),
+      value: transactionOnNetwork.value.toString(),
+      gasLimit: transactionOnNetwork.gasLimit.valueOf(),
+      gasPrice: transactionOnNetwork.gasPrice.valueOf(),
+      gasUsed: transactionOnNetwork.gasUsed?.valueOf() || 0,
+      nonce: transactionOnNetwork.nonce.valueOf(),
+      round: transactionOnNetwork.round || 0,
+      blockNonce: transactionOnNetwork.blockNonce?.valueOf() || 0,
+      blockHash: transactionOnNetwork.blockHash || '',
+      timestamp: transactionOnNetwork.timestamp?.valueOf() || 0,
+      smartContractResults: transactionOnNetwork.contractResults?.getImmediate() || [],
+      logs: transactionOnNetwork.logs?.events || [],
+      receipt: transactionOnNetwork.receipt,
+      isCompleted: transactionOnNetwork.status.isExecuted(),
+      isSuccessful: transactionOnNetwork.status.isSuccessful(),
+      isFailed: transactionOnNetwork.status.isFailed(),
+      isPending: !transactionOnNetwork.status.isExecuted(),
+    };
   }
 
-  // Calculate gas limit based on transaction data
-  private calculateGasLimit(data: string, value: string): number {
-    let gasLimit = GAS_CONFIG.gasLimit.min;
-
-    // Add gas for data
-    if (data) {
-      const dataLength = Buffer.from(data).length;
-      gasLimit += dataLength * GAS_CONFIG.gasPerDataByte;
+  async getTransactionStatus(txHash: string): Promise<{
+    isPending: boolean;
+    isSuccessful: boolean;
+    isFailed: boolean;
+  }> {
+    try {
+      const transaction = await this.networkProvider.getTransaction(txHash);
+      return {
+        isPending: !transaction.status.isExecuted(),
+        isSuccessful: transaction.status.isSuccessful(),
+        isFailed: transaction.status.isFailed(),
+      };
+    } catch (error) {
+      return {
+        isPending: true,
+        isSuccessful: false,
+        isFailed: false,
+      };
     }
-
-    // Add gas for value transfer
-    if (value !== '0') {
-      gasLimit += 50000;
-    }
-
-    return Math.min(gasLimit, GAS_CONFIG.gasLimit.max);
-  }
-
-  // Encode smart contract function call
-  private encodeFunctionCall(functionName: string, args: any[]): string {
-    // Basic encoding - in production use proper ABI encoding
-    const encoded = [functionName, ...args].join('@');
-    return encoded;
-  }
-
-  // Encode smart contract deployment data
-  private encodeDeployData(code: string, args: any[]): string {
-    // Basic encoding - in production use proper deployment encoding
-    const argsEncoded = args.length > 0 ? '@' + args.join('@') : '';
-    return code + argsEncoded;
   }
 }
 
-// Transaction Service
-export class SupernovaTransactionService {
-  private provider: ApiNetworkProvider;
-  private builder: SupernovaTransactionBuilder;
+// Balance utility class
+export class Balance implements IBalance {
+  private value: string;
+  private decimals: number;
 
-  constructor() {
-    this.provider = new ApiNetworkProvider(networkConfig.apiUrl);
-    this.builder = new SupernovaTransactionBuilder();
+  constructor(value: string, decimals: number = 18) {
+    this.value = value;
+    this.decimals = decimals;
   }
 
-  // Send transaction
-  async sendTransaction(
-    transaction: Transaction,
-    walletProvider: IWalletProvider
-  ): Promise<string> {
-    try {
-      // Sign transaction
-      const signedTransactions = await walletProvider.signTransactions([transaction]);
-      const signedTransaction = signedTransactions[0];
-
-      // Send to network
-      const txHash = await this.provider.sendTransaction(signedTransaction);
-      return txHash;
-    } catch (error) {
-      console.error('Transaction send failed:', error);
-      throw error;
-    }
+  toString(): string {
+    return this.value;
   }
 
-  // Get transaction status
-  async getTransactionStatus(txHash: string): Promise<TransactionStatus> {
-    try {
-      const transaction = await this.provider.getTransaction(txHash);
-      
-      if (transaction.isPending) return TX_STATUS.PENDING;
-      if (transaction.isSuccessful) return TX_STATUS.SUCCESS;
-      if (transaction.isFailed) return TX_STATUS.FAIL;
-      
-      return TX_STATUS.INVALID;
-    } catch (error) {
-      console.error('Failed to get transaction status:', error);
-      return TX_STATUS.INVALID;
-    }
+  toCurrencyString(): string {
+    const numValue = parseFloat(this.value) / Math.pow(10, this.decimals);
+    return numValue.toFixed(4);
+  }
+}
+
+// Gas utilities
+export class GasLimit implements IGasLimit {
+  private value: number;
+
+  constructor(value: number) {
+    this.value = value;
   }
 
-  // Wait for transaction completion
-  async waitForTransactionCompletion(
-    txHash: string,
-    timeout: number = 60000
-  ): Promise<TransactionStatus> {
-    const startTime = Date.now();
-    
-    while (Date.now() - startTime < timeout) {
-      const status = await this.getTransactionStatus(txHash);
-      
-      if (status !== TX_STATUS.PENDING) {
-        return status;
-      }
-      
-      // Wait 2 seconds before next check
-      await new Promise(resolve => setTimeout(resolve, 2000));
-    }
-    
-    throw new Error('Transaction timeout');
+  valueOf(): number {
+    return this.value;
+  }
+}
+
+export class GasPrice implements IGasPrice {
+  private value: number;
+
+  constructor(value: number) {
+    this.value = value;
   }
 
-  // Get transaction details
-  async getTransactionDetails(txHash: string) {
-    try {
-      return await this.provider.getTransaction(txHash);
-    } catch (error) {
-      console.error('Failed to get transaction details:', error);
-      throw error;
-    }
+  valueOf(): number {
+    return this.value;
+  }
+}
+
+export class ChainID implements IChainID {
+  private value: string;
+
+  constructor(value: string) {
+    this.value = value;
   }
 
-  // Estimate transaction fee
-  async estimateTransactionFee(transaction: Transaction): Promise<string> {
-    const gasLimit = transaction.getGasLimit().valueOf();
-    const gasPrice = transaction.getGasPrice().valueOf();
-    const fee = gasLimit * gasPrice;
-    
-    return Balance.fromString(fee.toString()).toPrettyString();
+  valueOf(): string {
+    return this.value;
   }
 }
